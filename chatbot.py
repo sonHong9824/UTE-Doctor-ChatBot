@@ -3,6 +3,7 @@ import pickle
 import numpy as np
 from sentence_transformers import SentenceTransformer
 import ollama
+from predict_skin import predict_image
 
 # =====================
 # LOAD VECTOR DB
@@ -72,16 +73,82 @@ def chatbot():
 
     while True:
 
-        query = input("\nBạn: ")
+        print("\nChọn chế độ:")
+        print("1. Hỏi bằng văn bản")
+        print("2. Chẩn đoán qua ảnh da")
+        print("exit. Thoát")
 
-        if query == "exit":
+        mode = input("\nBạn chọn: ")
+
+        if mode == "exit":
             break
 
-        context = search(query)
+        # =========================
+        # CHAT TEXT
+        # =========================
+        if mode == "1":
 
-        answer = ask_llm(query, context)
+            query = input("\nBạn: ")
 
-        print("\nAI:", answer)
+            context = search(query)
+
+            answer = ask_llm(
+                query,
+                context
+            )
+
+            print("\nAI:", answer)
+
+        # =========================
+        # IMAGE DETECTION
+        # =========================
+        elif mode == "2":
+
+            path = input(
+                "\nNhập đường dẫn ảnh: "
+            )
+
+            try:
+
+                results = predict_image(path)
+
+                print("\nTop 3 bệnh gần nhất:")
+
+                for disease, score in results:
+
+                    print(
+                        f"- {disease}: {round(score * 100, 2)}%"
+                    )
+
+                # lấy bệnh cao nhất
+                top_disease = results[0][0]
+
+                query = (
+                    f"Tôi có dấu hiệu bệnh da "
+                    f"{top_disease}"
+                )
+
+                context = search(query)
+
+                answer = ask_llm(
+                    query,
+                    context
+                )
+
+                print("\nAI:", answer)
+
+            except Exception as e:
+
+                print(
+                    "\nLỗi đọc ảnh:",
+                    e
+                )
+
+        else:
+
+            print(
+                "\nVui lòng chọn 1 / 2 / exit"
+            )
 
 
 chatbot()
