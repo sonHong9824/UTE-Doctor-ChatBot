@@ -5,17 +5,9 @@ from sentence_transformers import SentenceTransformer
 import ollama
 
 # =====================
-# CONFIG
-# =====================
-TOP_K_SEARCH = 10
-TOP_K_SHOW = 3
-MIN_SCORE = 0.75   # 75%
-
-# =====================
 # LOAD VECTOR DB
 # =====================
 model = SentenceTransformer("keepitreal/vietnamese-sbert")
-
 index = faiss.read_index("medical.index")
 
 with open("medical_metadata.pkl", "rb") as f:
@@ -25,88 +17,39 @@ questions = data["questions"]
 diseases = data["diseases"]
 
 
-# =====================
-# convert distance -> %
-# =====================
-def similarity_from_distance(distance):
-    # vì đang dùng embedding normalized
-    score = 1 / (1 + float(distance))
-    return round(score * 100, 2)
+def search(query, k=5):
 
+    query_vector = model.encode([query]).astype("float32")
+    distances, indices = index.search(query_vector, k)
 
-# =====================
-# SEARCH
-# =====================
-def search(query):
+    context = []
 
-    query_vector = model.encode(
-        [query],
-        normalize_embeddings=True
-    ).astype("float32")
-
-    distances, indices = index.search(
-        query_vector,
-        TOP_K_SEARCH
-    )
-
-    results = []
-
-    for dist, idx in zip(distances[0], indices[0]):
-
-        if idx == -1:
-            continue
-
-        score_percent = similarity_from_distance(dist)
-
-        if score_percent >= MIN_SCORE * 100:
-            results.append({
-                "disease": diseases[idx],
-                "symptom": questions[idx],
-                "score": score_percent
-            })
-
-    # sort giảm dần
-    results = sorted(
-        results,
-        key=lambda x: x["score"],
-        reverse=True
-    )
-
-    return results[:TOP_K_SHOW]
-
-
-# =====================
-# LLM
-# =====================
-def ask_llm(query, results):
-
-    if not results:
-        return (
-            "Xin lỗi, tôi chưa tìm thấy bệnh nào "
-            "đủ độ chính xác để gợi ý từ dữ liệu hiện tại."
+    for i in indices[0]:
+        context.append(
+            f"Bệnh: {diseases[i]} - Triệu chứng: {questions[i]}"
         )
 
-    context_text = "\n".join([
-        f"- {r['disease']} ({r['score']}%): {r['symptom']}"
-        for r in results
-    ])
+    return context
+
+
+def ask_llm(query, context):
+
+    context_text = "\n".join(context)
 
     prompt = f"""
-Bạn là chatbot tư vấn y tế.
+Bạn là bác sĩ AI.
 
-Dữ liệu tìm được:
+Dựa vào dữ liệu sau:
 {context_text}
 
-Người dùng hỏi:
+Câu hỏi người dùng:
 {query}
 
-Yêu cầu:
-- chỉ dựa trên dữ liệu trên
-- ưu tiên bệnh có % cao nhất
-- giải thích ngắn gọn
-- liệt kê tối đa 3 bệnh
-- trả lời tiếng Việt tự nhiên
-- nếu chưa đủ chắc chắn thì nói cần khám bác sĩ
+Hãy:
+- đoán bệnh có khả năng nhất
+- giải thích
+- hướng điều trị
+- trả lời tự nhiên tiếng Việt
 """
 
     response = ollama.chat(
@@ -122,9 +65,6 @@ Yêu cầu:
     return response["message"]["content"]
 
 
-# =====================
-# CHATBOT
-# =====================
 def chatbot():
 
     print("Medical AI Local Chatbot")
@@ -137,19 +77,9 @@ def chatbot():
         if query == "exit":
             break
 
-        results = search(query)
+        context = search(query)
 
-        # debug
-        if results:
-            print("\nTop kết quả:")
-            for r in results:
-                print(
-                    f"{r['disease']} - {r['score']}%"
-                )
-        else:
-            print("\nKhông có kết quả phù hợp.")
-
-        answer = ask_llm(query, results)
+        answer = ask_llm(query, context)
 
         print("\nAI:", answer)
 
