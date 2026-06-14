@@ -114,6 +114,15 @@ Hãy:
 
         return predict_image(image_path)
 
+    def _format_image_results(self, image_results):
+        formatted = []
+        for disease, score in image_results:
+            formatted.append({
+                "label": str(disease),
+                "confidence": float(score),
+            })
+        return formatted
+
     def get_sample_prompts(self, mode="general"):
         prompts = SAMPLE_PROMPTS.get(mode) or SAMPLE_PROMPTS["general"]
 
@@ -148,22 +157,52 @@ Hãy:
 
     def answer(self, query, history=None, mode="general", image_data_url=None, image_file_name=None, image_mime_type=None):
         temp_image_path = None
+        image_results = []
+        image_predictions = []
+        user_query = (query or "").strip()
+        image_summary_text = ""
 
         try:
             if image_data_url:
                 temp_image_path = self._write_data_url_to_temp_file(image_data_url, image_file_name, image_mime_type)
                 try:
                     image_results = self.analyze_image(temp_image_path)
-                    top_disease = image_results[0][0]
-                    query = query.strip() or f"Tôi có dấu hiệu bệnh da {top_disease}"
-                    query = f"{query}\nKết quả phân tích ảnh gợi ý: {', '.join([f'{disease} ({round(score * 100, 2)}%)' for disease, score in image_results])}"
+                    image_predictions = self._format_image_results(image_results)
+                    image_summary_text = ", ".join([
+                        f"{item['label']} ({round(item['confidence'] * 100, 2)}%)"
+                        for item in image_predictions
+                    ])
                 except Exception as image_error:
-                    query = query.strip() or "Tôi muốn được tư vấn ban đầu về tình trạng da trong ảnh."
-                    query = f"{query}\n(Lưu ý: chưa phân tích được ảnh tự động — {image_error})"
+                    user_query = user_query or "Tôi muốn được tư vấn ban đầu về tình trạng da trong ảnh."
+                    user_query = f"{user_query}\n(Lưu ý: chưa phân tích được ảnh tự động — {image_error})"
 
-            context = self.search(query)
+            if image_predictions and not user_query:
+                top = image_predictions[0]
+                reply = (
+                    "Kết quả nhận diện ảnh (chỉ mang tính tham khảo): "
+                    f"khả năng cao nhất là {top['label']} ({round(top['confidence'] * 100, 2)}%). "
+                    f"Top dự đoán: {image_summary_text}. "
+                    "Bạn nên khám chuyên khoa da liễu để được chẩn đoán chính xác."
+                )
+                return {
+                    "reply": reply,
+                    "mode": mode,
+                    "source": "image-classifier",
+                    "image_predictions": image_predictions,
+                    "suggestions": self.suggest(mode),
+                }
+
+            retrieval_query = user_query or "Tôi cần được tư vấn sức khỏe tổng quát."
+            llm_query = retrieval_query
+            if image_predictions:
+                llm_query = (
+                    f"{retrieval_query}\n"
+                    f"Thông tin bổ sung từ mô hình nhận diện ảnh da: {image_summary_text}."
+                )
+
+            context = self.search(retrieval_query)
             try:
-                reply = self.ask_llm(query, context, history=history)
+                reply = self.ask_llm(llm_query, context, history=history)
             except Exception as llm_error:
                 top_context = context[0] if context else "chưa có dữ liệu tham chiếu phù hợp"
                 reply = (
@@ -175,6 +214,7 @@ Hãy:
                     "reply": reply,
                     "mode": mode,
                     "source": "fallback",
+                    "image_predictions": image_predictions,
                     "suggestions": self.suggest(mode),
                     "warning": str(llm_error),
                 }
@@ -189,6 +229,7 @@ Hãy:
             "reply": reply,
             "mode": mode,
             "source": "python-service",
+                "image_predictions": image_predictions,
             "suggestions": self.suggest(mode),
         }
 
