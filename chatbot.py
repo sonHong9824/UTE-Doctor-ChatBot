@@ -34,6 +34,43 @@ class MedicalChatbot:
         self.questions = data["questions"]
         self.diseases = data["diseases"]
 
+    def _skin_label_to_vietnamese_name(self, label):
+        normalized = str(label).strip().lower()
+
+        label_map = {
+            "acne and rosacea photos": "mụn trứng cá / rosacea",
+            "actinic keratosis basal cell carcinoma and other malignant lesions": "dày sừng ánh sáng / ung thư da cần loại trừ",
+            "atopic dermatitis photos": "viêm da cơ địa",
+            "bullous disease photos": "bệnh da bóng nước",
+            "cellulitis impetigo and other bacterial infections": "nhiễm khuẩn da",
+            "eczema photos": "bệnh chàm / viêm da cơ địa",
+            "exanthems and drug eruptions": "phát ban do thuốc / phát ban toàn thân",
+            "hair loss photos alopecia and other hair diseases": "rụng tóc / bệnh tóc và da đầu",
+            "herpes hpv and other stds photos": "nhiễm virus da niêm mạc",
+            "light diseases and disorders of pigmentation": "rối loạn sắc tố da",
+            "lupus and other connective tissue diseases": "lupus / bệnh mô liên kết",
+            "melanoma skin cancer nevi and moles": "tổn thương sắc tố da cần loại trừ ung thư da",
+            "nail fungus and other nail disease": "nấm móng / bệnh móng",
+            "poison ivy photos and other contact dermatitis": "viêm da tiếp xúc / dị ứng da",
+            "psoriasis pictures lichen planus and related diseases": "vảy nến / bệnh da viêm mạn tính",
+            "scabies lyme disease and other infestations and bites": "ghẻ / nhiễm ký sinh trùng hoặc côn trùng đốt",
+            "seborrheic keratoses and other benign tumors": "tổn thương da lành tính",
+            "systemic disease": "biểu hiện da của bệnh lý toàn thân",
+            "tinea ringworm candidiasis and other fungal infections": "nấm da",
+            "urticaria hives": "mề đay",
+            "vascular tumors": "u mạch máu / tổn thương mạch máu",
+            "vasculitis photos": "viêm mạch máu",
+            "warts molluscum and other viral infections": "mụn cóc / u mềm lây / nhiễm virus da",
+        }
+
+        if normalized in label_map:
+            return label_map[normalized]
+
+        cleaned = str(label).strip()
+        cleaned = cleaned.replace(" Photos", "")
+        cleaned = cleaned.replace(" pictures", "")
+        return cleaned or str(label)
+
 
     def search(self, query, k=3):
         query_vector = self.model.encode([query]).astype("float32")
@@ -48,8 +85,12 @@ class MedicalChatbot:
 
         return context
 
-    def ask_llm(self, query, context, history=None):
+    def ask_llm(self, query, context, history=None, instructions=None):
         context_text = "\n".join(context)
+
+        extra_instructions = ""
+        if instructions:
+            extra_instructions = f"\n{instructions}\n"
 
         prompt = f"""
 Bạn là bác sĩ AI.
@@ -59,6 +100,8 @@ Dựa vào dữ liệu sau:
 
 Câu hỏi người dùng:
 {query}
+
+{extra_instructions}
 
 Hãy:
 - đoán bệnh có khả năng nhất
@@ -123,6 +166,30 @@ Hãy:
             })
         return formatted
 
+    def _build_image_medical_query(self, top_prediction, image_predictions):
+        top_label = str(top_prediction.get("label", "")).strip()
+        top_name = self._skin_label_to_vietnamese_name(top_label)
+        top_confidence = round(float(top_prediction.get("confidence", 0.0)) * 100, 2)
+        top_predictions_text = ", ".join(
+            f"{item['label']} ({round(item['confidence'] * 100, 2)}%)"
+            for item in image_predictions
+        )
+
+        query = (
+            f"Ảnh da gợi ý bệnh có khả năng cao nhất là {top_label} ({top_confidence}%). "
+            f"Tên bệnh gần đúng để giải thích cho người dùng: {top_name}. "
+            f"Các dự đoán khác: {top_predictions_text}."
+        )
+
+        instructions = (
+            "Người dùng vừa gửi ảnh da. Hãy ưu tiên giải thích bệnh được dự đoán cao nhất bằng tiếng Việt dễ hiểu, "
+            "nêu ngắn gọn vì sao bệnh này thường có biểu hiện như vậy, cách xử lý ban đầu an toàn tại nhà, "
+            "khi nào cần khám da liễu sớm, và các dấu hiệu cần đi khám gấp. "
+            "Không chỉ lặp lại tỷ lệ dự đoán. Nhắc rõ đây chỉ là gợi ý tham khảo, không phải chẩn đoán xác định."
+        )
+
+        return query, instructions, top_name
+
     def get_sample_prompts(self, mode="general"):
         prompts = SAMPLE_PROMPTS.get(mode) or SAMPLE_PROMPTS["general"]
 
@@ -176,40 +243,41 @@ Hãy:
                     user_query = user_query or "Tôi muốn được tư vấn ban đầu về tình trạng da trong ảnh."
                     user_query = f"{user_query}\n(Lưu ý: chưa phân tích được ảnh tự động — {image_error})"
 
-            if image_predictions and not user_query:
-                top = image_predictions[0]
-                reply = (
-                    "Kết quả nhận diện ảnh (chỉ mang tính tham khảo): "
-                    f"khả năng cao nhất là {top['label']} ({round(top['confidence'] * 100, 2)}%). "
-                    f"Top dự đoán: {image_summary_text}. "
-                    "Bạn nên khám chuyên khoa da liễu để được chẩn đoán chính xác."
-                )
-                return {
-                    "reply": reply,
-                    "mode": mode,
-                    "source": "image-classifier",
-                    "image_predictions": image_predictions,
-                    "suggestions": self.suggest(mode),
-                }
-
             retrieval_query = user_query or "Tôi cần được tư vấn sức khỏe tổng quát."
             llm_query = retrieval_query
+            llm_instructions = None
+
             if image_predictions:
+                top_prediction = image_predictions[0]
+                image_query, llm_instructions, top_name = self._build_image_medical_query(top_prediction, image_predictions)
                 llm_query = (
                     f"{retrieval_query}\n"
-                    f"Thông tin bổ sung từ mô hình nhận diện ảnh da: {image_summary_text}."
+                    f"Thông tin bổ sung từ mô hình nhận diện ảnh da: {image_summary_text}.\n"
+                    f"Bệnh gợi ý chính: {top_name}."
                 )
+                context_query = image_query
+            else:
+                context_query = retrieval_query
 
-            context = self.search(retrieval_query)
+            context = self.search(context_query)
             try:
-                reply = self.ask_llm(llm_query, context, history=history)
+                reply = self.ask_llm(llm_query, context, history=history, instructions=llm_instructions)
             except Exception as llm_error:
-                top_context = context[0] if context else "chưa có dữ liệu tham chiếu phù hợp"
-                reply = (
-                    "Hiện tại tôi chưa thể kết nối mô hình ngôn ngữ. "
-                    f"Dựa trên triệu chứng tương tự trong hệ thống: {top_context}. "
-                    "Đây chỉ là định hướng ban đầu, bạn nên đi khám để được chẩn đoán chính xác."
-                )
+                if image_predictions:
+                    top_label = image_predictions[0]["label"]
+                    top_name = self._skin_label_to_vietnamese_name(top_label)
+                    reply = (
+                        f"Ảnh gợi ý nhiều nhất đến {top_name}. "
+                        "Bạn nên giữ vùng da sạch và khô, tránh gãi hoặc tự bôi thuốc mạnh khi chưa rõ chẩn đoán, "
+                        "dùng dưỡng ẩm dịu nhẹ nếu da khô và đặt lịch khám da liễu để được xác nhận chính xác."
+                    )
+                else:
+                    top_context = context[0] if context else "chưa có dữ liệu tham chiếu phù hợp"
+                    reply = (
+                        "Hiện tại tôi chưa thể kết nối mô hình ngôn ngữ. "
+                        f"Dựa trên triệu chứng tương tự trong hệ thống: {top_context}. "
+                        "Đây chỉ là định hướng ban đầu, bạn nên đi khám để được chẩn đoán chính xác."
+                    )
                 return {
                     "reply": reply,
                     "mode": mode,
@@ -228,8 +296,8 @@ Hãy:
         return {
             "reply": reply,
             "mode": mode,
-            "source": "python-service",
-                "image_predictions": image_predictions,
+            "source": "image-llm" if image_predictions else "python-service",
+            "image_predictions": image_predictions,
             "suggestions": self.suggest(mode),
         }
 
