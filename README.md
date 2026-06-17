@@ -1,9 +1,9 @@
-# Redmine - Đặc tả chatbot y khoa UTE Doctor ChatBot
+# Readme - Đặc tả chatbot y khoa UTE Doctor ChatBot
 
 ## 1. Thông tin chung
 
 - Dự án: UTE-Doctor-ChatBot
-- Tài liệu: Redmine đặc tả chức năng chatbot y khoa
+- Tài liệu: Readme đặc tả chức năng chatbot y khoa
 - Phiên bản: 1.0
 - Ngày cập nhật: 2026-06-18
 - Phạm vi: Trả lời theo hội thoại văn bản, nhận diện ảnh da liễu, gợi ý hướng xử lý ban đầu, và trả lời tư vấn sức khỏe tổng quát
