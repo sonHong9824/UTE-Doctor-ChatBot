@@ -331,5 +331,3 @@ Hệ thống hiện tại đã có đủ 3 lớp năng lực chính:
 1. Trả lời y khoa bằng tri thức từ dữ liệu câu hỏi - bệnh.
 2. Nhận diện và giải thích ảnh da liễu.
 3. Phục vụ qua HTTP API để tích hợp vào frontend hoặc các hệ thống khác.
-
-Tài liệu này mô tả theo góc nhìn BA để có thể dùng làm Redmine issue, mô tả task cho dev, và làm tiêu chí test cho QA.
